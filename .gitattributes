@@ -1,0 +1,7 @@
+*.md text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.ps1 text eol=lf
+*.psm1 text eol=lf
+*.py text eol=lf
+*.template text eol=lf
