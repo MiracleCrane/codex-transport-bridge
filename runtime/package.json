@@ -1,0 +1,13 @@
+{
+  "name": "codex-transport-bridge",
+  "version": "1.5.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test *.test.mjs"
+  },
+  "dependencies": {
+    "https-proxy-agent": "9.1.0",
+    "ws": "8.22.0"
+  }
+}

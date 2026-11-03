@@ -1,0 +1,194 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Net;
+using System.Text;
+using System.Threading;
+using System.Web.Script.Serialization;
+using System.Collections.Generic;
+using System.Windows.Forms;
+
+// Started only by the user's shortcut. No scheduled task, login entry, service,
+// process termination, account change, or Codex configuration write is performed.
+internal static class ConnectedLauncher
+{
+    private const string Root = @"@@RUNTIME_ROOT@@";
+    private const string Node = @"@@NODE_PATH@@";
+    private const string OriginalShortcut = @"@@ORIGINAL_SHORTCUT@@";
+    private static readonly object LogLock = new object();
+    private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
+
+    private static Dictionary<string, object> Health()
+    {
+        try
+        {
+            var request = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:@@PORT@@/health");
+            request.Proxy = null; request.Timeout = 1500; request.ReadWriteTimeout = 1500;
+            using (var response = request.GetResponse())
+            using (var reader = new StreamReader(response.GetResponseStream()))
+            {
+                var value = Json.Deserialize<Dictionary<string, object>>(reader.ReadToEnd());
+                if (!value.ContainsKey("ready") || !Equals(value["ready"], true)
+                    || !value.ContainsKey("service") || !Equals(value["service"], "codex-transport-bridge")
+                    || !value.ContainsKey("version") || !Equals(value["version"], "@@VERSION@@")
+                    || !value.ContainsKey("instanceId") || !Equals(value["instanceId"], "@@INSTANCE_ID@@")) return null;
+                return value;
+            }
+        }
+        catch { return null; }
+    }
+    private static bool Ready() { return Health() != null; }
+    private static bool BridgeIdle()
+    {
+        var h = Health();
+        if (h == null || Convert.ToInt64(h["httpActive"]) != 0) return false;
+        var ws = h["websocket"] as Dictionary<string, object>;
+        return ws != null && Convert.ToInt64(ws["activeConnections"]) == 0
+            && Convert.ToInt64(ws["pendingConnections"]) == 0;
+    }
+    private static bool CodexRunning()
+    {
+        foreach (string name in new[] { @@HOST_PROCESS_NAMES@@ })
+        {
+            foreach (var process in Process.GetProcessesByName(name))
+            {
+                using (process) { try { if (!process.HasExited) return true; } catch { } }
+            }
+        }
+        return false;
+    }
+
+    private static void Log(string message)
+    {
+        lock (LogLock)
+        {
+            try
+            {
+                string path = Path.Combine(Root, "launcher-@@INSTANCE_ID@@.log");
+                if (File.Exists(path) && new FileInfo(path).Length > 2097152)
+                    File.WriteAllText(path, "", new UTF8Encoding(false));
+                File.AppendAllText(path, DateTimeOffset.Now.ToString("o") + " " + message + Environment.NewLine,
+                    new UTF8Encoding(false));
+            }
+            catch { /* Diagnostics do not control the transport. */ }
+        }
+    }
+
+    private static Process StartBridge()
+    {
+        var info = new ProcessStartInfo(Node,
+            "\"" + Path.Combine(Root, "server.mjs") + "\" --port @@PORT@@ --proxy @@PROXY_URI@@ --ack-window 131072 --event-log transport-events-@@INSTANCE_ID@@.jsonl --managed true --instance-id @@INSTANCE_ID@@");
+        info.WorkingDirectory = Root;
+        info.UseShellExecute = false;
+        info.CreateNoWindow = true;
+        info.WindowStyle = ProcessWindowStyle.Hidden;
+        info.RedirectStandardInput = true;
+        info.RedirectStandardOutput = true;
+        info.RedirectStandardError = true;
+        var process = new Process { StartInfo = info };
+        // Drain both pipes so a terminal selection or a full output pipe cannot
+        // suspend the relay. Do not persist bodies, headers or arbitrary errors.
+        process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) {
+            if (e.Data != null && e.Data.Contains("\"kind\":\"ready\"")) Log("bridge ready");
+        };
+        process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) {
+            if (e.Data != null) Log("bridge emitted a diagnostic on stderr");
+        };
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        Log("started bridge pid=" + process.Id);
+        return process;
+    }
+
+    private static void OpenCodex()
+    {
+        if (String.IsNullOrEmpty(OriginalShortcut))
+            throw new InvalidOperationException("This installation is a component. Start it with --guard-only; the desktop kit owns Codex activation.");
+        Process.Start(new ProcessStartInfo(OriginalShortcut) {
+            WorkingDirectory = Path.GetDirectoryName(OriginalShortcut),
+            UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden
+        });
+        Log("opened preserved original shortcut");
+    }
+
+    [STAThread]
+    private static int Main(string[] args)
+    {
+        if (args.Length == 1 && args[0] == "--check")
+        {
+            bool ready = Ready();
+            Log(ready ? "readiness check passed" : "readiness check failed");
+            return ready ? 0 : 2;
+        }
+        bool owner;
+        using (var mutex = new Mutex(true, @"Local\CodexModelTransportShortcut-@@PORT@@", out owner))
+        {
+            if (!owner)
+            {
+                for (int i = 0; i < 20 && !Ready(); i++) Thread.Sleep(500);
+                if (Ready()) { if (!(args.Length == 1 && args[0] == "--guard-only")) OpenCodex(); return 0; }
+                MessageBox.Show("本机转发暂时没有响应。已保留当前进程，请检查 Codex 连接诊断。", "Codex 连接", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return 2;
+            }
+            Process ownedBridge = null;
+            bool appOpened = args.Length == 1 && args[0] == "--guard-only";
+            if (appOpened) Log("started supervision without opening or restarting Codex");
+            int failures = 0;
+            bool sawCodex = CodexRunning();
+            DateTime startupAt = DateTime.UtcNow;
+            DateTime? noCodexSince = null;
+            while (true)
+            {
+                if (CodexRunning()) { sawCodex = true; noCodexSince = null; }
+                else if (appOpened && (sawCodex || (DateTime.UtcNow - startupAt).TotalSeconds >= 30))
+                {
+                    if (noCodexSince == null) noCodexSince = DateTime.UtcNow;
+                    if ((DateTime.UtcNow - noCodexSince.Value).TotalSeconds >= 5 && BridgeIdle())
+                    {
+                        if (ownedBridge != null && !ownedBridge.HasExited)
+                        {
+                            try
+                            {
+                                ownedBridge.StandardInput.WriteLine("close-idle-bridge");
+                                ownedBridge.StandardInput.Flush();
+                                if (!ownedBridge.WaitForExit(5000))
+                                {
+                                    Log("waiting for owned bridge to exit cooperatively");
+                                    Thread.Sleep(1000); continue;
+                                }
+                            }
+                            catch { if (!ownedBridge.HasExited) { Thread.Sleep(1000); continue; } }
+                        }
+                        Log("Codex exited; owned idle bridge and supervisor finished");
+                        return 0;
+                    }
+                }
+                bool ready = Ready();
+                if (!ready && (ownedBridge == null || ownedBridge.HasExited))
+                {
+                    if (ownedBridge != null) { ownedBridge.Dispose(); ownedBridge = null; }
+                    try { ownedBridge = StartBridge(); }
+                    catch { Log("bridge launch failed"); }
+                    for (int i = 0; i < 20 && !(ready = Ready()); i++) Thread.Sleep(250);
+                }
+                if (ready)
+                {
+                    failures = 0;
+                    if (!appOpened) { OpenCodex(); appOpened = true; }
+                }
+                else
+                {
+                    failures++;
+                    Log("bridge readiness unavailable; no process was terminated");
+                    if (!appOpened && failures >= 2)
+                    {
+                        MessageBox.Show("转发程序未能就绪，因此没有切换或重启任何 Codex 会话。", "Codex 连接", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return 2;
+                    }
+                }
+                Thread.Sleep(1000);
+            }
+        }
+    }
+}
