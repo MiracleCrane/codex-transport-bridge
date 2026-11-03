@@ -28,3 +28,7 @@ jobs:
           python -X utf8 tests/config-edit.test.py --work-directory (Join-Path $env:RUNNER_TEMP 'config-tests')
           if ($LASTEXITCODE -ne 0) { throw 'Config tests failed' }
           ./tests/installer-boundaries.test.ps1 -WorkDirectory (Join-Path $env:RUNNER_TEMP 'boundaries')
+
+      - name: Supervisor startup failure
+        shell: pwsh
+        run: ./tests/supervisor-failure.test.ps1 -WorkDirectory (Join-Path $env:RUNNER_TEMP "supervisor-failure")

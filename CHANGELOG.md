@@ -1,5 +1,10 @@
 # Changes
 
+## 1.5.1
+
+- Bound initial headless-supervisor startup failure and stop supervising an exited owned runtime after the host is gone.
+- Add configuration restore preflight for coordinated kit rollback.
+
 ## 1.5.0
 
 - Publish the bridge as an independent project with source, installation documentation, fixtures and maintenance boundaries.

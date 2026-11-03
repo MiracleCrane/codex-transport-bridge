@@ -16,6 +16,8 @@ foreach ($entry in $receipt.Entries) {
         throw 'Outer wrapper changed; inspect before restoring.'
     }
 }
+& $receipt.PythonPath -X utf8 (Join-Path $PSScriptRoot 'config-edit.py') check-restore --state $receipt.ConfigTransaction
+if ($LASTEXITCODE -ne 0) { throw 'Configuration restore preflight failed; no owned setting was changed.' }
 if (-not $PSCmdlet.ShouldProcess($receipt.Destination, 'Restore only this bridge base URL and selected shortcut snapshots')) { return }
 Invoke-BridgeConfigEdit $receipt 'restore'
 foreach ($entry in $receipt.Entries) {

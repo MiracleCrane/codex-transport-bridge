@@ -96,7 +96,7 @@ def validate_url(value):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("prepare", "apply", "restore", "inspect"))
+    parser.add_argument("action", choices=("prepare", "apply", "restore", "check-restore", "inspect"))
     parser.add_argument("--state", required=True)
     parser.add_argument("--config")
     parser.add_argument("--url")
@@ -129,6 +129,15 @@ def main():
         state = json.loads(state_path.read_text(encoding="utf-8-sig"))
         config = Path(state["config"])
         data = config.read_bytes() if config.exists() else b""
+        if args.action == "check-restore":
+            if state["status"] != "restored" and parse(data).get(KEY) == state["url"]:
+                before = Path(state["before"]).read_bytes()
+                if digest(before) != state["beforeSha256"]:
+                    raise ConfigError("Config backup hash mismatch")
+                if digest(data) != state["afterSha256"]:
+                    change_key(data, state["previous"], bytes.fromhex(state["originalLineHex"]))
+            print(json.dumps({"restorable": True}))
+            return
         if args.action == "inspect":
             effective = parse(data)
             print(json.dumps({"ownsSetting": effective.get(KEY) == state["url"], "hasBaseUrl": KEY in effective}))

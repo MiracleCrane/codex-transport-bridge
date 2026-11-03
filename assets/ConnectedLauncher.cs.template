@@ -135,6 +135,7 @@ internal static class ConnectedLauncher
             bool appOpened = args.Length == 1 && args[0] == "--guard-only";
             if (appOpened) Log("started supervision without opening or restarting Codex");
             int failures = 0;
+            bool everReady = false;
             bool sawCodex = CodexRunning();
             DateTime startupAt = DateTime.UtcNow;
             DateTime? noCodexSince = null;
@@ -144,7 +145,8 @@ internal static class ConnectedLauncher
                 else if (appOpened && (sawCodex || (DateTime.UtcNow - startupAt).TotalSeconds >= 30))
                 {
                     if (noCodexSince == null) noCodexSince = DateTime.UtcNow;
-                    if ((DateTime.UtcNow - noCodexSince.Value).TotalSeconds >= 5 && BridgeIdle())
+                    if ((DateTime.UtcNow - noCodexSince.Value).TotalSeconds >= 5 &&
+                        (ownedBridge == null || ownedBridge.HasExited || BridgeIdle()))
                     {
                         if (ownedBridge != null && !ownedBridge.HasExited)
                         {
@@ -170,10 +172,16 @@ internal static class ConnectedLauncher
                     if (ownedBridge != null) { ownedBridge.Dispose(); ownedBridge = null; }
                     try { ownedBridge = StartBridge(); }
                     catch { Log("bridge launch failed"); }
-                    for (int i = 0; i < 20 && !(ready = Ready()); i++) Thread.Sleep(250);
+                    DateTime readyDeadline = DateTime.UtcNow.AddSeconds(5);
+                    while (ownedBridge != null && !ownedBridge.HasExited && DateTime.UtcNow < readyDeadline)
+                    {
+                        if (ready = Ready()) break;
+                        Thread.Sleep(150);
+                    }
                 }
                 if (ready)
                 {
+                    everReady = true;
                     failures = 0;
                     if (!appOpened) { OpenCodex(); appOpened = true; }
                 }
@@ -181,9 +189,10 @@ internal static class ConnectedLauncher
                 {
                     failures++;
                     Log("bridge readiness unavailable; no process was terminated");
-                    if (!appOpened && failures >= 2)
+                    if (!everReady && failures >= 2)
                     {
-                        MessageBox.Show("转发程序未能就绪，因此没有切换或重启任何 Codex 会话。", "Codex 连接", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        if (!appOpened) MessageBox.Show("转发程序未能就绪，因此没有切换或重启任何 Codex 会话。", "Codex 连接", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        Log("initial bridge startup failed; supervisor finished");
                         return 2;
                     }
                 }
