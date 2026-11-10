@@ -37,7 +37,7 @@ export function createHttpTransportServer(options = {}) {
   const pathPrefix = options.pathPrefix ?? '/backend-api/codex/';
   const maxBodyBytes = options.maxHttpBodyBytes ?? 256 * 1024 * 1024;
   const requestTimeoutMs = options.requestTimeoutMs ?? 15 * 60 * 1000;
-  const responseHeadersTimeoutMs = options.responseHeadersTimeoutMs ?? 60_000;
+  const responseHeadersTimeoutMs = options.responseHeadersTimeoutMs ?? 180_000;
   const responseDrainTimeoutMs = options.responseDrainTimeoutMs ?? 5_000;
   const closeTimeoutMs = options.closeTimeoutMs ?? 1_000;
   if (!Number.isSafeInteger(responseDrainTimeoutMs) || responseDrainTimeoutMs < 1 || responseDrainTimeoutMs > 30_000

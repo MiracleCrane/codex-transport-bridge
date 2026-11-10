@@ -1,5 +1,10 @@
 # Changes
 
+## 1.5.2
+
+- Allow up to 180 seconds for upstream HTTP response headers after request hand-off, reducing premature retries for large contexts.
+- Verify delayed headers beyond one minute and prompt cancellation while waiting. Connection setup, streaming idle and response-drain deadlines are unchanged.
+
 ## 1.5.1
 
 - Bound initial headless-supervisor startup failure and stop supervising an exited owned runtime after the host is gone.

@@ -10,6 +10,7 @@
 | 大量输入、缓存命中为 0，途中又 steering | 冷请求处理和中断/下一次采样可能拉长等待；不能与高缓存的小问答直接对照，也不能只凭 UI 判定失联。 |
 | WebSocket 在 `response.completed` 前关闭 | 区分上游先关闭与调用方取消；收到关闭后的转发时延和此前静默原因分开判断。 |
 | HTTP 200 后出现 `error decoding response body` | 对齐 `http_response_error` 的错误码、完整性标志、最后收包间隔和缓冲字节。旧版会直接销毁下行并丢尾；1.4.0 起保留已收到的尾部字节，缺失完成事件仍视为失败；对应夹具在 tests/http-response-drain.test.mjs 与 tests/native-client-fixture.mjs。 |
+| HTTP 504 与 `UPSTREAM_HEADERS_TIMEOUT` | 桥接在请求交给本地 socket 后等待响应头超时，不代表服务端已收齐请求。1.5.2 起默认等待 180 秒，旧版本为 60 秒；响应头到达后即清除该计时器。 |
 | `upstream-liveness-timeout` | 对应连接的匹配 Pong 未在期限内完成；`write_pending` 与 `awaiting_pong` 分别表示探测写入未完成、写完后未收到匹配回应。 |
 | `upstream-pong-timeout` | 上传窗口确认未完成。不能用早于该窗口字节发出的心跳 Ping，来确认后面上传的字节。 |
 | 上游始终回应 Pong，却仍无模型输出 | 传输仍有响应；桥接不能据此区分后端排队、未缓存输入处理和模型内部异常。不能用固定正文超时强行截断正常推理。 |
